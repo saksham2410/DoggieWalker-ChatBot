@@ -1,114 +1,109 @@
+const dialogflow = require("dialogflow");
+const uuid = require("uuid");
+require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
-const mongoose = require("mongoose");
-const { WebhookClient } = require("dialogflow-fulfillment");
-const expressApp = express().use(bodyParser.json());
-
-process.env.DEBUG = "dialogflow:debug";
-const dburi =
-  "<YOUR DB URL>";
-mongoose.connect(dburi, { useNewUrlParser: true }).catch(err => {
-  console.log("error occured", err);
-});
-
-mongoose.connection.on("connected", () => {
-  console.log("App is connected with database.");
-});
-
-mongoose.connection.on("disconnected", () => {
-  console.log("App disconnected with database.");
-  process.exit(1);
-});
-
-var userDetail = new mongoose.Schema(
-  {
-    name: { type: String, required: true },
-    bookingId: {type:String, required: true},
-    age: { type: Number, required: true },
-    breed: { type: String, required: true },
-    recurring: { type: Number, required: true },
-    walkdate: { type: Date, required: true }
-  },
-  { collection: "bookingInfo" }
+const cors = require("cors");
+const mongoose = require('mongoose');
+const app = express();
+const query = 'Hello';
+const port = 3000;
+let bodyParser = require("body-parser");
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+app.use(
+  cors({
+    origin: "http://localhost:8080"
+  })
 );
-var model = new mongoose.model("bookingInfo", userDetail);
+const sessionId = uuid.v4();
+const projectId = "dogiewalker-fjgbue";
 
-expressApp.post("/webhook", function (request, response, next) {
-  const agent = new WebhookClient({ request: request, response: response });
-
-  function welcome(agent) {
-    agent.add(`Good day! you want to book a appointment`);
-  }
-
-  function fallback(agent) {
-    agent.add(`I didn't understand`);
-    agent.add(`I'm sorry, can you try again?`);
-  }
-
-  function walkBooking(agent) {
-    const name = agent.parameters.name;
-    const age = agent.parameters.age;
-    const breed = agent.parameters.breed;
-    const recurring = agent.parameters.recurring;
-    const walkdate = agent.parameters.walkdate;
-    const bookingId = agent.parameters.bookingId;
-
-    console.log(name, persons, email);
-
-    var data = {
-      name: name,
-      age: age,
-      breed: breed,
-      recurring: recurring,
-      walkdate: walkdate,
-      bookingId: bookingId
-    };
-
-    console.log(data);
-
-    var saveData = new model(data);
-    saveData.save((err, mydata) => {
-      if (err) {
-        console.log(err);
-        agent.add(`Erroe while writing on database`);
-      } else {
-        agent.add(`Thanks! Dog ${name} request for ${walkdate} 
-    have been forwarded we will contact you.`);
-      }
-    });
-
-    agent.add(`Thanks! Dog ${name} your request for ${walkdate} 
-    persons have forwarded we will contact you.`);
-  }
-
-  function showBooking(agent) {
-    var bookingName = agent.parameters.bookingname;
-    console.log("Booking Name:", bookingName);
-    model.find({ bookingId: bookingId }, (err, mydata) => {
-      if (err) {
-        agent.add(`Erroe while looking on database`);
-        console.log(err);
-      } else {
-        console.log("success show booking");
-        agent.add(
-          `Appointment added`
-        );
-      }
-    });
-  }
-
-  function sendMail(agent) {
-
-  }
-
-  let intentMap = new Map();
-  intentMap.set("Default Welcome Intent", welcome);
-  intentMap.set("Default Fallback Intent", fallback);
-  intentMap.set("WalkBooking", walkBooking);
-  intentMap.set("ShowBooking", showBooking);
-
-  agent.handleRequest(intentMap);
+const sessionClient = new dialogflow.SessionsClient({
+  keyFilename: "DogieWalker-e8ad74546425.json"
 });
-expressApp.listen(process.env.PORT || 3000, function () {
-  console.log("app is running in 3000");
+const sessionPath = sessionClient.sessionPath(projectId, sessionId);
+
+mongoose.connect(process.env.DB, {
+    useNewUrlParser: true
+}, function (error) {
+    if (error) {
+        console.log(error);
+    } else {
+        console.log("Connected to the Database");
+    }
 });
+const {Booking} = require('./models/Booking');
+app.post("/talk", (req, res) => {
+  console.log(req.body);
+  const request = {
+    session: sessionPath,
+    queryInput: {
+      text: {
+        text: req.body,
+        languageCode: 'en-US'
+      }
+    }
+  };
+
+  sessionClient
+    .detectIntent(request)
+    .then(responses => {
+      var data = {
+        name: "",
+        age: "",
+        breed: "",
+        recurring: "",
+        walkdate: "",
+        bookingId: ""
+      };
+      console.log("Detected intent");
+      const result = responses[0].queryResult;
+      console.log(`  Query: ${req.body}`);
+      console.log(`  Response: ${result.fulfillmentText}`);
+      if (result.intent) {
+        console.log(`  Intent: ${result.intent.displayName}`);
+        if(result.intent.displayName==="Name-Intent")
+        {
+          data.name=result.fulfillmentText.parameters.name
+          data.bookingId=data.name+data.age+data.walkdate
+        }
+        if(result.intent.displayName==="Age-Intent")
+        {
+          data.age=result.fulfillmentText.parameters.age
+          data.bookingId=data.name+data.age+data.walkdate
+        }
+        if(result.intent.displayName==="Breed-Intent")
+        {
+          data.breed=result.fulfillmentText.parameters.breed
+          data.bookingId=data.name+data.age+data.walkdate
+        }
+        if(result.intent.displayName==="Date-Intent")
+        {
+          data.walkdate=result.fulfillmentText.parameters.date
+          data.bookingId=data.name+data.age+data.walkdate
+        }
+        if(result.intent.displayName==="Recurring-Intent")
+        {
+          data.recurring=result.fulfillmentText.parameters.recurring
+          data.bookingId=data.name+data.age+data.walkdate
+        }
+      } else {
+        console.log(`  No intent matched.`);
+      }
+      if (responses) {
+        const booking = new Booking(data)
+        booking.save()
+        .then((booking) => {
+            res.send(booking)
+        })
+        .catch(err => res.send(err))
+      }
+    })
+    .catch(err => {
+      console.error("ERROR:", err);
+    });
+});
+
+app.listen(port, () =>
+  console.log(`Example app listening on http://localhost:${port}!`)
+);
